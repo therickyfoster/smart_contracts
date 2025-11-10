@@ -1,0 +1,114 @@
+{
+  "project": "Global Carbon Accountability",
+  "solidity": {
+    "main_contract": "CarbonAccountability.sol",
+    "token_contract": "OffsetToken (ERC20)",
+    "compiler_version": "0.8.19",
+    "dependencies": [
+      "OpenZeppelin/contracts@4.x: AccessControl, ERC20, ReentrancyGuard, ECDSA"
+    ],
+    "upgrade_pattern_suggestion": "UUPSUpgradeable or Transparent Proxy (optional)",
+    "scaling": "Use integer SCALE = 1e6 for all tCO2e values and confidence values"
+  },
+  "offchain_components": {
+    "verifier_service": {
+      "purpose": "Consume IoT streams and satellite imagery, run ML fusion, produce signed verification packages",
+      "inputs": ["IoT telemetry (time series)", "satellite imagery tiles", "supply chain manifests", "weather data"],
+      "outputs": ["verification report JSON", "confidence 0..1 scaled to 1e6", "IPFS CID of proof bundle", "verifier ECDSA signature"],
+      "api_endpoints": [
+        {"path": "/submit-verification", "method": "POST", "auth": "mTLS + API key + ORACLE_ROLE account mapping"},
+        {"path": "/proof/{cid}", "method": "GET", "serves": "proof bundle (images, model outputs, metadata)"}
+      ],
+      "signature_scheme": "secp256k1 ECDSA; the verifier service must sign verification report; contract checks signer is ORACLE_ROLE",
+      "recommended_stack": "k8s, python (FastAPI), Postgres for metadata, ML infra (Torch), Rasterio/GDAL, Planet/ESA APIs"
+    },
+    "iot_gateway": {
+      "purpose": "Aggregate sensor readings, compute local rolling aggregates, detect anomalies, and push signed packets to verifier",
+      "security": "Device identity (X.509), message queue (MQTT over TLS), anti-spoofing attestation"
+    },
+    "storage": {
+      "purpose": "Store heavy proofs, imagery, model artifacts off-chain",
+      "recommended": "IPFS / Filecoin for persistence, S3 for ephemeral, Merkle DAG anchoring"
+    },
+    "oracle_bridge": {
+      "purpose": "Trusted signer service that pushes verification events to blockchain using a private key that has ORACLE_ROLE",
+      "features": ["rate limiting", "replay protection", "nonce tracking", "proof CID anchoring"]
+    }
+  },
+  "smart_contract_extensions": {
+    "1_registry_improvements": "Add KYC hash, jurisdiction, legal contact; support multisig controllers for entities.",
+    "2_collateral_token": "Replace ETH bond with stablecoin (USDC) collateral; add ERC20 collateral handling.",
+    "3_time_lock_governance": "Add Timelock & DAO governance contract to manage roles and policy updates.",
+    "4_batch_verifications": "Support batch verify + batch minting to reduce gas; include Merkle proofs for batch membership.",
+    "5_gas_optimizations": "Use events instead of large storage writes; pack structs tightly; consider mapping of arrays via pointers.",
+    "6_privacy": "Store hashes only; use zkSNARK/zkSTARK verifiers for privacy-preserving proofs on-chain (optional advanced)."
+  },
+  "api_spec": {
+    "oracle_push": {
+      "request": {
+        "reportId": "uint256",
+        "verifiedEmissionsScaled": "uint256",
+        "confidenceScaled": "uint256",
+        "verifierCID": "string",
+        "signature": "hex"
+      },
+      "response": {
+        "txHash": "string",
+        "status": "queued|sent|error"
+      },
+      "security": "Sign payload with verifier key; contract verifies signer has ORACLE_ROLE"
+    }
+  },
+  "testing_matrix": {
+    "unit_tests": [
+      "registerEntity flows",
+      "bond deposit and insufficient bond rejections",
+      "submitEmissionReport validity checks",
+      "verifyReport acceptance/rejection paths",
+      "mintOffsets limits and reentrancy checks",
+      "raiseDispute and resolveDispute (uphold & reject) including bond slashing"
+    ],
+    "integration_tests": [
+      "oracle signed verification accepted on-chain",
+      "transfer+burn flow for retireOffsets",
+      "batch minting util with Merkle proofs"
+    ],
+    "property_tests": [
+      "No double-mint beyond gross emissions",
+      "Bond cannot go negative",
+      "Only ORACLE_ROLE can call verifyReport",
+      "Dispute resolution by auditor only"
+    ],
+    "security_tests": [
+      "role enumeration and privilege escalation checks",
+      "reentrancy & flashloan vector testing",
+      "gas usage under heavy batch inflows",
+      "simulate oracle compromise and examine slashing flows"
+    ]
+  },
+  "deployment": {
+    "suggestions": [
+      "Deploy OffsetToken first, grant MINTER_ROLE to CarbonAccountability after multisig timelock",
+      "Grant ORACLE_ROLE to 2+ independent verifiers for decentralized verification (quorum voting optional)",
+      "Use a timelocked DAO-controlled admin for governance changes"
+    ],
+    "networks": ["mainnet (production offsets), polygon or optimism (L2 cheap txs), testnets (goerli/sepolia)"]
+  },
+  "security_and_audit": {
+    "checklist": [
+      "All external calls reviewed",
+      "Role-based access audits",
+      "Slashing logic must not accidentally allow theft (simulate edge cases)",
+      "Ensure offsetToken.mint cannot be front-run to mint more than intended",
+      "VRF/non-repudiable signatures for oracles",
+      "Formal verification of critical math (no underflows/overflows, Solidity 0.8 protects but logical checks needed)"
+    ]
+  },
+  "governance_policy": {
+    "recommendation": "On-chain DAO controls critical params (confidence threshold, treasury, ORACLE_ROLE whitelist) with 2-step timelock."
+  },
+  "metrics_and_reporting": {
+    "onchain_metrics": ["totalVerifiedEmissionsScaled", "totalOffsetsMintedScaled", "totalOffsetsRetiredScaled"],
+    "offchain_dashboards": "Grafana & Kibana visualizing per-entity time series, oracle reliability scores, verification latencies"
+  }
+}
